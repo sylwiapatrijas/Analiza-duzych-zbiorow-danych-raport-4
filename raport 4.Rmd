@@ -1,0 +1,1134 @@
+---
+title: "Metody regulacyjne w regresji wielorakiej - regresja grzbietowa i LASSO"
+author: "Sylwia Patrijas"
+date: "2025-05-23"
+output: pdf_document
+---
+
+
+Celem niniejszego raportu jest analiza i porównanie różnych metod estymacji współczynników regresji w wielowymiarowym modelu liniowym, w którym liczba zmiennych predykcyjnych jest równa liczbie obserwacji ($n = p = 500$). Zastosowane zostaną klasyczne i nowoczesne techniki regresyjne, takie jak regresja grzbietowa, regresja LASSO oraz adaptacyjne LASSO.
+
+
+W analizie zostanie wykorzystany model liniowy postaci $Y = X \beta + \epsilon$, gdzie: $X_{nxp}$ - macierz planu, $n = p = 500$, $\epsilon \sim N(0, I)$. Rozważone zostanie sześć przypadków, w zależności od wektora współczynników regresji, który wyraża się następującymi wzorami: 
+
+* $\beta_1=...=\beta_k=4$, $\beta_{k+1}=...=\beta_p=0$,
+* $\beta_1=...=\beta_k=\sqrt{\frac{80}{k}}$, $\beta_{k+1}=...=\beta_p=0$
+
+dla $k \in \{ 5, 20, 100\}$.
+
+
+
+
+## PRZYPADEK MACIERZY ORTONORMALNEJ
+
+
+Jako pierwszy zostanie rozważony przypadek **ortonormalnej macierzy planu** $X$, to znaczy takiej, że $X^T X = I$. Wygeneruję taką macierz, korzystając z polecenia *randortho*, a następnie sprawdzę poprawność wygenerowanej macierzy, wyliczając $X^T X$.
+
+
+```{r 1, echo = FALSE, warning = FALSE, message = FALSE}
+
+library(pracma)
+
+set.seed(111)
+n <- 500
+p <- 500
+X <- randortho(n, type = "orthonormal")
+I <- t(X) %*% X
+
+# roznice elementow na przekatnej a 1:
+
+diag_diff <- abs(diag(I) - 1)
+max_diff <- format(max(diag_diff), scientific = FALSE)
+
+
+# roznice elementow poza przekatna a 0:
+
+macierz <- matrix(0, n, n)
+diag(macierz) <- diag(I)
+roznica <- I - macierz
+max_diff_2 <- format(max(abs(roznica)), scientific = FALSE)
+
+```
+
+
+
+Maksymalna różnica między elementami na przekątnej iloczynu macierzy $X^T X$ a liczbą $1$ to wartość **bardzo bliska zera**. Podobnie, maksymalna różnica między elementami poza przekątną tego iloczynu a liczbą $0$ jest **bardzo zbliżona do zera**. Zatem, potwierdza to **poprawność wygenerowania macierzy ortonormalnej**, gdyż niewielkie różnice pojawiają się z powodu błędów numerycznych.
+
+
+
+### OBCIĄŻENIE, WARIANCJA I MSE DLA ESTYMATORA W REGRESJI GRZBIETOWEJ
+
+
+Na początku dla każdego $i \in \{ 1,...,p\}$ wyliczę teoretycznie obciążenie, wariancję i błąd średniokwadratowy dla estymatora $\hat{\beta_i}^{RR}$ uzyskanego za pomocą regresji grzbietowej z parametrem wygładzającym $\gamma$. 
+
+
+**Regresja grzbietowa** polega na szukaniu estymatora $\hat{\beta}_{RR}$ w następującej postaci: $\hat{\beta}_{RR} = argmin_{b \in \mathbb{R}^p} L(b)$, gdzie $L(b) = ||Y - X b||^2 + \gamma ||b||^2$, a $\gamma > 0$ - parametr. Wynika z tego, iż owy estymator regresji grzbietowej wyraża się następującym wzorem: $$\hat{\beta}_{RR} = (X'X + \gamma I)^{-1} X' Y.$$
+
+
+W naszym przypadku, $X'X = I$ oraz $\sigma^2 = 1$. Z tego wynika, iż estymator regresji grzbietowej wygląda następująco: $\hat{\beta}_{RR} = (I + \gamma I)^{-1} X' Y = \frac{1}{1 + \gamma} X' Y$ i (na podstawie tego, iż jest on przekształceniem liniowym wektora $Y \sim N(X \beta, \sigma^2 I)$) pochodzi on z rozkładu normalnego $N(\frac{1}{1 + \gamma} X' X \beta, \sigma^2\frac{1}{(1 + \gamma)^2} X' X) = N(\frac{1}{1 + \gamma} \beta, \frac{\sigma^2}{(1 + \gamma)^2} I) = N(\frac{1}{1 + \gamma} \beta, \frac{1}{(1 + \gamma)^2} I)$. Stąd mamy, że: $$\hat{\beta}_i^{RR} \sim N(\frac{1}{1 + \gamma} \beta_i, \frac{1}{(1 + \gamma)^2}).$$
+
+
+Na tej podstawie możemy wyliczyć następujące wielkości:
+
+* **obciążenie estymatora $\hat{\beta_i}^{RR}$**: $Bias(\hat{\beta_i}^{RR}) = E(\hat{\beta_i}^{RR}) - \beta_i = \frac{1}{1 + \gamma} \beta_i - \beta_i = \beta_i \cdot (\frac{1}{1 + \gamma} - 1) = -\frac{\gamma}{1 + \gamma} \beta_i$,
+
+* **wariancja estymatora $\hat{\beta_i}^{RR}$**: $Var(\hat{\beta_i}^{RR}) = \frac{1}{(1 + \gamma)^2}$,
+
+* **błąd średniokwadratowy estymatora $\hat{\beta_i}^{RR}$**: $MSE(\hat{\beta_i}^{RR}) = [Bias(\hat{\beta_i}^{RR})]^2 + Var(\hat{\beta_i}^{RR}) = [- \frac{\gamma}{1 + \gamma} \cdot \beta_i]^2 + \frac{1}{(1 + \gamma)^2} = \frac{\gamma^2}{(1 + \gamma)^2} \cdot \beta_i^2 + \frac{1}{(1 + \gamma)^2} = \frac{\gamma^2 \beta_i^2 + 1}{(1 + \gamma)^2}$.
+
+
+### OPTYMALNY PARAMETR $\gamma$ DLA REGRESJI GRZBIETOWEJ
+
+
+W tej części, dla każdego z sześciu omawianych przypadków, wyznaczę teoretycznie parametr $\gamma$, który umożliwia osiągnięcie minimalnej wartości błędu średniokwadratowego $MSE = E ||\hat{\beta} - \beta||^2$.
+
+
+Na podstawie wyliczeń z poprzedniej części możemy wywnioskować, że: $$MSE(\hat{\beta}^{RR}) = \sum_{i = 1}^p MSE(\hat{\beta_i}^{RR}) = \sum_{i = 1}^p \frac{\gamma^2 \beta_i^2 + 1}{(1 + \gamma)^2} = \frac{p + \gamma^2 ||\beta||^2}{(1 + \gamma)^2} = f(\gamma).$$ Następnie, wybieramy taki parametr $\gamma$, że: $$\gamma_{opt} = argmin_{\gamma} f(\gamma) = argmin_{\gamma} \frac{p + \gamma^2 ||\beta||^2}{(1 + \gamma)^2}.$$ Aby to zrobić, wyliczę pochodną funkcji $f(\gamma)$ względem $\gamma$, a następnie przyrównam ją do $0$: $$\frac{d f}{d \gamma} = \frac{2 \gamma ||\beta||^2 \cdot (1 + \gamma)^2 - (p + \gamma^2 ||\beta||^2) \cdot 2 \cdot (1 + \gamma)}{(1 + \gamma)^4} =  \frac{2 \gamma ||\beta||^2 \cdot (1 + \gamma) - (p + \gamma^2 ||\beta||^2) \cdot 2}{(1 + \gamma)^3} =$$  $$= \frac{2 \gamma ||\beta||^2 + 2 \gamma^2 ||\beta||^2 - 2 p - 2 \gamma^2 ||\beta||^2}{(1 + \gamma)^3} = \frac{2 \gamma ||\beta||^2 - 2p}{(1 + \gamma)^3},$$ $$\frac{d f}{d \gamma} = 0 \Leftrightarrow 2 \gamma ||\beta||^2 - 2p = 0 \Leftrightarrow \gamma ||\beta||^2 = p \Leftrightarrow \gamma = \frac{p}{||\beta||^2}.$$ Wynika z tego, że: $$\gamma_{opt} = \frac{p}{||\beta||^2}.$$
+
+
+Znając już teoretyczny wzór, wyznaczę te wartości dla wszystkich sześciu omawianych przypadków i przedstawię uzyskane wyniki w tabeli, gdzie beta1 oznacza wektor $\beta_1=...=\beta_k=4$, $\beta_{k+1}=...=\beta_p=0$, a beta2 - $\beta_1=...=\beta_k=\sqrt{\frac{80}{k}}$, $\beta_{k+1}=...=\beta_p=0$.
+
+
+```{r 2, echo = FALSE}
+
+set.seed(10)
+k1 <- 5
+k2 <- 20
+k3 <- 100
+
+beta1_k1 <- c(rep(4, k1), rep(0, p - k1))
+beta2_k1 <- c(rep(sqrt(80 / k1), k1), rep(0, p - k1))
+Y1_k1 <- X %*% beta1_k1 + rnorm(n)
+Y2_k1 <- X %*% beta2_k1 + rnorm(n)
+
+beta1_k2 <- c(rep(4, k2), rep(0, p - k2))
+beta2_k2 <- c(rep(sqrt(80 / k2), k2), rep(0, p - k2))
+Y1_k2 <- X %*% beta1_k2 + rnorm(n)
+Y2_k2 <- X %*% beta2_k2 + rnorm(n)
+
+beta1_k3 <- c(rep(4, k3), rep(0, p - k3))
+beta2_k3 <- c(rep(sqrt(80 / k3), k3), rep(0, p - k3))
+Y1_k3 <- X %*% beta1_k3 + rnorm(n)
+Y2_k3 <- X %*% beta2_k3 + rnorm(n)
+
+
+
+opt_gamma <- function(beta) {
+  length(beta) / sum(beta^2)
+}
+
+opt_gamma1_k1 <- opt_gamma(beta1_k1)
+opt_gamma1_k2 <- opt_gamma(beta1_k2)
+opt_gamma1_k3 <- opt_gamma(beta1_k3)
+opt_gamma2_k1 <- opt_gamma(beta2_k1)
+opt_gamma2_k2 <- opt_gamma(beta2_k2)
+opt_gamma2_k3 <- opt_gamma(beta2_k3)
+
+
+df_gammy <- t(data.frame(
+  x1 = round(c(opt_gamma1_k1, opt_gamma1_k2, opt_gamma1_k3), 2),
+  x2 = round(c(opt_gamma2_k1, opt_gamma2_k2, opt_gamma2_k3), 2)
+))
+rownames(df_gammy) <- c(
+  "beta1",
+  "beta2"
+)
+colnames(df_gammy) <- c("k = 5", "k = 20", "k = 100")
+
+
+knitr::kable(df_gammy, caption = "Optymalne wartości $\\gamma$")
+
+```
+
+
+
+### OPTYMALNY PARAMETR $\lambda$ DLA LASSO
+
+
+W tej części, dla każdego z sześciu omawianych przypadków, wyznaczę parametr $\lambda$ dla LASSO, który umożliwia osiągnięcie minimalnej wartości błędu średniokwadratowego $MSE = E ||\hat{\beta} - \beta||^2$.
+
+
+**LASSO** polega na szukaniu estymatora $\hat{\beta}_{L}$ w następującej postaci: $\hat{\beta}_{L} = argmin_{b \in \mathbb{R}^p} L(b)$, gdzie $L(b) = \frac{1}{2}||Y - X b||^2_2 + \lambda ||b||_1$, a $\lambda > 0$ - parametr.
+
+W przeciwieństwie do regresji grzbietowej, gdzie możliwe było analityczne wyznaczenie parametru $\gamma$ minimalizującego wartość średniokwadratowego błędu estymacji, w przypadku regresji LASSO nie istnieje ogólna postać zamknięta pozwalająca na bezpośrednie wyznaczenie optymalnego parametru regularyzacyjnego $\lambda$. Z tego powodu jego doboru dokonam w oparciu o symulacje komputerowe. Dla każdej z analizowanych konfiguracji dopasuję model LASSO za pomocą funkcji *glmnet*, a następnie posłużę się siatką wartości $\lambda$ automatycznie wygenerowaną przez zastosowaną funkcję. Dla każdej wartości $\lambda$ z tego zbioru obliczę błąd średniokwadratowy względem prawdziwego wektora $\beta$ i za optymalną wybiorę tę wartość, która minimalizuje obliczone MSE.
+
+
+Ukażę wykresy przedstawiające obliczone wartości błędu średniokwadratowego dla zastosowanego zbioru wartości $\lambda$ z zaznaczeniem tej wartości, która została uznana za optymalną.
+
+
+
+
+```{r 3, echo = FALSE, warning = FALSE, message = FALSE}
+
+set.seed(10)
+
+library(glmnet)
+library(ggplot2)
+opt_lambda_glmnet <- function(X, Y, beta_true, title) {
+  lasso_model <- glmnet(X, Y, alpha = 1, intercept = FALSE, standardize = FALSE)
+  lambda_seq <- lasso_model$lambda
+  coef_matrix <- coef(lasso_model)[-1, ]
+  
+  mse_values <- apply(coef_matrix, 2, function(est_beta) sum((est_beta - beta_true)^2))
+  
+  best_index <- which.min(mse_values)
+  best_lambda <- lambda_seq[best_index]
+  
+  df_plot <- data.frame(
+    lambda = lambda_seq,
+    MSE = mse_values
+  )
+  
+  p <- ggplot(df_plot, aes(x = lambda, y = MSE)) +
+    geom_line(color = "purple") +
+    geom_point(color = "purple") +
+    geom_vline(xintercept = best_lambda, color = "red", linetype = "dashed", size = 1) +
+    annotate("text", x = best_lambda, y = max(mse_values), label = paste0("lambda = ", signif(best_lambda, 3)), 
+             vjust = -1, hjust = 0, color = "red") +
+    theme_minimal() +
+    labs(title = title,
+         x = "Lambda",
+         y = "MSE") + theme(plot.title = element_text(hjust = 0.5)) + theme(
+  text = element_text(size = 14),            
+  axis.title = element_text(size = 16),     
+  axis.text = element_text(size = 12),        
+  legend.title = element_text(size = 14),      
+  legend.text = element_text(size = 12),     
+  plot.title = element_text(size = 18, hjust = 0.5)  
+)
+  
+
+  return(list(
+    lambda = best_lambda,
+    mse = mse_values,
+    index = best_index,
+    model = lasso_model,
+    plot = p
+  ))
+}
+
+
+wynik1_k1 <- opt_lambda_glmnet(X, Y1_k1, beta1_k1, "MSE względem lambda (k = 5)")
+wynik1_k2 <- opt_lambda_glmnet(X, Y1_k2, beta1_k2, "MSE względem lambda (k = 20)")
+wynik1_k3 <- opt_lambda_glmnet(X, Y1_k3, beta1_k3, "MSE względem lambda (k = 100)")
+wynik2_k1 <- opt_lambda_glmnet(X, Y2_k1, beta2_k1, "MSE względem lambda (k = 5)")
+wynik2_k2 <- opt_lambda_glmnet(X, Y2_k2, beta2_k2, "MSE względem lambda (k = 20)")
+wynik2_k3 <- opt_lambda_glmnet(X, Y2_k3, beta2_k3, "MSE względem lambda (k = 100)")
+
+opt_lambda1_k1 <- wynik1_k1$lambda
+opt_lambda1_k2 <- wynik1_k2$lambda
+opt_lambda1_k3 <- wynik1_k3$lambda
+opt_lambda2_k1 <- wynik2_k1$lambda
+opt_lambda2_k2 <- wynik2_k2$lambda
+opt_lambda2_k3 <- wynik2_k3$lambda
+
+
+df_lambdy <- t(data.frame(
+  x1 = format(round(c(wynik1_k1$lambda, wynik1_k2$lambda, wynik1_k3$lambda), 4), scientific = FALSE),
+  x2 = format(round(c(wynik2_k1$lambda, wynik2_k2$lambda, wynik2_k3$lambda), 4), scientific = FALSE)
+))
+rownames(df_lambdy) <- c(
+  "beta1",
+  "beta2"
+)
+colnames(df_lambdy) <- c("k = 5", "k = 20", "k = 100")
+
+```
+
+
+**Dla wektora $\beta_1=...=\beta_k=4$, $\beta_{k+1}=...=\beta_p=0$:**
+
+```{r 32, echo = FALSE, fig.width=8, fig.height=8, fig.show='hold', out.width='50%', message = FALSE, warning = FALSE}
+
+wynik1_k1$plot
+wynik1_k2$plot
+wynik1_k3$plot
+
+```
+
+
+**Dla wektora $\beta_1=...=\beta_k=\sqrt{\frac{80}{k}}$, $\beta_{k+1}=...=\beta_p=0$:**
+
+
+```{r 33, echo = FALSE, fig.width=8, fig.height=8, fig.show='hold', out.width='50%', message = FALSE, warning = FALSE}
+
+wynik2_k1$plot
+wynik2_k2$plot
+wynik2_k3$plot
+
+```
+
+
+Widzimy, iż, faktycznie, przedstawiona funkcja MSE osiąga najmniejszą wartość na wykresie w wybranym optymalnym punkcie $\lambda$.
+
+
+Następnie, przedstawię również tabelę uzyskanych wyników, gdzie, ponownie, beta1 oznacza wektor $\beta_1=...=\beta_k=4$, $\beta_{k+1}=...=\beta_p=0$, a beta2 - $\beta_1=...=\beta_k=\sqrt{\frac{80}{k}}$, $\beta_{k+1}=...=\beta_p=0$.
+
+
+```{r 34, echo = FALSE}
+
+knitr::kable(df_lambdy, caption = "Optymalne wartości $\\lambda$")
+
+```
+
+
+
+
+### PORÓWNANIE BŁĘDU ŚREDNIOKWADRATOWEGO MSE
+
+
+Porównam teraz w każdym z omawianych przypadków wartości błędu średniokwadratowego MSE uzyskane za pomocą metody najmniejszych kwadratów z optymalnymi wartościami MSE, które można uzyskać za pomocą regresji grzbietowej i LASSO.
+
+
+Wiemy, iż estymator uzyskany **metodą najmniejszych kwadratów** wygląda w tym przypadku następująco: $\hat{\beta}^{LS} = (X'X)^{-1} X' Y = X' Y$ oraz (ponieważ $Y \sim N(X \beta, \sigma^2 I)$) rozkład $\hat{\beta}^{LS}$ to $N(\beta, \sigma^2 I) = N(\beta, I)$. Mając już takie informacje, możemy wyznaczyć następujący wzór na błąd średniokwadratowy: $$MSE(\hat{\beta}^{LS}) = E ||\hat{\beta}^{LS} - \beta||^2 = E \sum_{i=1}^p (\hat{\beta}^{LS}_i - \beta_i)^2 = \sum_{i=1}^p E (\hat{\beta}^{LS}_i - \beta_i)^2 = \sum_{i=1}^p Var(\hat{\beta}^{LS}_i) = \sum_{i=1}^p \sigma^2 = p \cdot \sigma^2 = p.$$
+
+
+Następnie, wartość MSE dla **regresji grzbietowej** obliczę, korzystając ze wzoru wyprowadzonego we wcześniejszej części: $MSE(\hat{\beta}^{RR}) = \frac{\gamma^2 ||\beta||^2 + p}{(1 + \gamma)^2}$. Z kolei dla **LASSO** wykorzystam wartość MSE uzyskaną w poprzedniej części dla optymalnej wartości $\lambda$.
+
+
+Przedstawię teraz dwa wykresy ukazujące uzyskane wartości MSE w zależności od postaci wektora $\beta$ oraz od liczby istotnych współczynników i zastosowanej metody.
+
+
+
+```{r 4, echo = FALSE, fig.width=8, fig.height=8, fig.show='hold', out.width='50%', message = FALSE, warning = FALSE}
+
+library(tidyr)
+library(dplyr)
+set.seed(10)
+MSE_zestawienie <- function(Y, beta, gamma_opt, mse_lasso) {
+  p <- length(beta)
+  MSE_LS <- p
+  
+  MSE_RR <- (p + gamma_opt^2 * sum(beta^2)) / (1 + gamma_opt)^2
+  
+  return(list(MSE_LS = MSE_LS,
+              MSE_RR = MSE_RR,
+              MSE_LASSO = mse_lasso))
+}
+
+
+MSE1_k1 <- MSE_zestawienie(Y1_k1, beta1_k1, opt_gamma1_k1, min(wynik1_k1$mse))
+MSE1_k2 <- MSE_zestawienie(Y1_k2, beta1_k2, opt_gamma1_k2, min(wynik1_k2$mse))
+MSE1_k3 <- MSE_zestawienie(Y1_k3, beta1_k3, opt_gamma1_k3, min(wynik1_k3$mse))
+MSE2_k1 <- MSE_zestawienie(Y2_k1, beta2_k1, opt_gamma2_k1, min(wynik2_k1$mse))
+MSE2_k2 <- MSE_zestawienie(Y2_k2, beta2_k2, opt_gamma2_k2, min(wynik2_k2$mse))
+MSE2_k3 <- MSE_zestawienie(Y2_k3, beta2_k3, opt_gamma2_k3, min(wynik2_k3$mse))
+
+
+
+
+df1 <- data.frame(
+  k = c(5, 20, 100),
+  LS = c(MSE1_k1$MSE_LS, MSE1_k2$MSE_LS, MSE1_k3$MSE_LS),
+  Ridge = c(MSE1_k1$MSE_RR, MSE1_k2$MSE_RR, MSE1_k3$MSE_RR),
+  LASSO = c(MSE1_k1$MSE_LASSO, MSE1_k2$MSE_LASSO, MSE1_k3$MSE_LASSO)
+) %>% 
+  pivot_longer(-k, names_to = "Metoda", values_to = "MSE")
+
+
+
+df2 <- data.frame(
+  k = c(5, 20, 100),
+  LS = c(MSE2_k1$MSE_LS, MSE2_k2$MSE_LS, MSE2_k3$MSE_LS),
+  Ridge = c(MSE2_k1$MSE_RR, MSE2_k2$MSE_RR, MSE2_k3$MSE_RR),
+  LASSO = c(MSE2_k1$MSE_LASSO, MSE2_k2$MSE_LASSO, MSE2_k3$MSE_LASSO)
+) %>%
+  pivot_longer(-k, names_to = "Metoda", values_to = "MSE")
+
+
+
+ggplot(df1, aes(x = k, y = MSE, color = Metoda)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  labs(x = "k (liczba niezerowych współczynników)", y = "MSE") +
+  theme_minimal() + ggtitle(expression(paste("Porównanie MSE", " (", beta[1], ",...,", beta[k], " = 4)"))) + 
+  theme(plot.title = element_text(hjust = 0.5)) +   theme(
+  text = element_text(size = 14),             
+  axis.title = element_text(size = 16),    
+  axis.text = element_text(size = 12), 
+  legend.title = element_text(size = 14),
+  legend.text = element_text(size = 12),
+  plot.title = element_text(size = 18, hjust = 0.5)
+) + theme(legend.position = "bottom")
+
+
+
+ggplot(df2, aes(x = k, y = MSE, color = Metoda)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 2) +
+  labs(x = "k (liczba niezerowych współczynników)", y = "MSE") +
+  theme_minimal() + ggtitle(expression(paste("Porównanie MSE", " (", beta[1], ",..., ", beta[k], " = ", sqrt(80/k), ")"))) + 
+  theme(plot.title = element_text(hjust = 0.5)) +   theme(
+  text = element_text(size = 14),             
+  axis.title = element_text(size = 16),    
+  axis.text = element_text(size = 12), 
+  legend.title = element_text(size = 14),
+  legend.text = element_text(size = 12),
+  plot.title = element_text(size = 18, hjust = 0.5)
+) + theme(legend.position = "bottom")
+
+```
+
+
+
+Na pierwszym wykresie widzimy, iż w przypadku, gdy $\beta_1=...=\beta_k=4$ **LASSO wypada najlepiej** - osiąga najniższe wartości MSE, szczególnie przy mniejszej liczbie istotnych zmiennych. Jest tak dlatego, że metoda ta zeruje nieistotne współczynniki, co w przypadku rzadkich wektorów $\beta$ prowadzi do mniejszych błędów estymacji. **Regresja klasyczna ma bardzo wysoki i stały błąd średniokwadratowy** - nie radzi sobie ona w sytuacji, gdy liczba zmiennych $p$ jest zbliżona do liczby obserwacji $n$. Z kolei **regresja grzbietowa** jest lepsza niż klasyczna regresja, ale gorsza od LASSO pod względem wartości MSE - regularizacja pomaga, ale nie eliminuje wpływu nieistotnych zmiennych tak skutecznie jak LASSO. Regresja grzbietowa nie zeruje współczynników - tylko je tłumi, dlatego też nie usuwa ona szumu w pełni. Możemy również zauważyć, że wraz ze wzrostem liczby niezerowych współczynników $k$ rośnie również MSE dla LASSO i dla regresji grzbietowej - wówczas model staje się mniej rzadki i LASSO ma więcej istotnych zmiennych do wykrycia, więc łatwiej o błędy eliminacji, a regresja grzbietowa ma więcej współczynników do oszacowania, w wyniku czego suma kar za ich wielkość rośnie.
+
+
+Patrząc na drugi wykres, widzimy, iż w przypadku, gdy $\beta_1=...=\beta_k=\sqrt{80/k}$ **regresja klasyczna** nadal ma najwyższe, stałe wartości błędu średniokwadratowego. W tej sytuacji zawsze $||\beta||^2 = k \cdot (\sqrt{\frac{80}{k}})^2 = 80$, więc współczynniki są mniejsze dla większego $k$, ale nie są aż tak trudne do wykrycia, gdyż suma ich wpływów jest ograniczona. Dlatego też dla **LASSO** oraz dla **regresji grzbietowej** wartości MSE są znacznie niższe niż w poprzedniej sytuacji. Widzimy także, iż początkowo LASSO ma najniższe wartości błędu średniokwadratowego, ale dla $k = 100$ to regresja grzbietowa okazuje się lepsza.
+
+
+
+### ŚREDNIA LICZBA FAŁSZYWYCH ODKRYĆ DLA LASSO
+
+
+W tej części raportu wyznaczę teoretycznie **średnią liczbę fałszywych odkryć** dla LASSO z optymalną wartością parametru $\lambda$.
+
+
+Załóżmy, że badamy następujące hipotezy: $H_{0i}: \beta_i = 0$, $H_{1i}: \beta_i \neq 0$. Wówczas, przy prawdziwości hipotezy zerowej, estymator wyznaczony metodą najmniejszych kwadratów $\hat{\beta}_i^{LS} \sim N(0, 1)$. Zatem, prawdopodobieństwo fałszywego odkrycia mogę wyliczyć następująco: $P(FD) = P(\text{LASSO wybiera} X^i | \beta_i = 0) = P(|\hat{\beta}_i^{LS}| > \lambda | \beta_i = 0) = 2 \cdot (1 - \Phi(\lambda))$. Z tego wynika, iż średnia liczba fałszywych odkryć to otrzymany właśnie wynik przemnożony przez liczbę prawdziwych hipotez zerowych: $$E(PD) = (p - k) \cdot 2 \cdot (1 - \Phi(\lambda)),$$ gdzie: $p$ - liczba zmiennych, $k$ - liczba istotnych zmiennych.
+
+
+Wykorzystam owy wzór i przedstawię tabelę ukazującą uzyskane średnie liczby fałszywych odkryć w rozważanych przypadkach, gdzie, ponownie, beta1 oznacza wektor $\beta_1=...=\beta_k=4$, $\beta_{k+1}=...=\beta_p=0$, a beta2 - $\beta_1=...=\beta_k=\sqrt{\frac{80}{k}}$, $\beta_{k+1}=...=\beta_p=0$. 
+
+
+```{r 5, echo = FALSE}
+
+srednia_FD <- function(p, k, lambda_opt) {
+  (p - k) * 2 * (1 - pnorm(lambda_opt))
+}
+
+
+FD1_k1 <- srednia_FD(p, 5, opt_lambda1_k1)
+FD1_k2 <- srednia_FD(p, 20, opt_lambda1_k2)
+FD1_k3 <- srednia_FD(p, 100, opt_lambda1_k3)
+FD2_k1 <- srednia_FD(p, 5, opt_lambda2_k1)
+FD2_k2 <- srednia_FD(p, 20, opt_lambda2_k2)
+FD2_k3 <- srednia_FD(p, 100, opt_lambda2_k3)
+
+
+
+df_fd <- t(data.frame(
+  FD = round(c(FD1_k1, FD1_k2, FD1_k3), 3),
+  FD = round(c(FD2_k1, FD2_k2, FD2_k3), 3)
+))
+colnames(df_fd) <- c("k = 5", "k = 20", "k = 100")
+row.names(df_fd) <- c("beta1", "beta2")
+
+knitr::kable(df_fd, caption = "Średnia liczba fałszywych odkryć")
+
+```
+
+
+
+Widzimy, iż uzyskane wyniki dla obu postaci wektora $\beta$ są do siebie bardzo zbliżone. Ponadto, w każdym przypadku średnia liczba fałszywie wybranych zmiennych przez LASSO jest bardzo bliska liczbie wszystkich zmiennych nieistotnych. Zatem, teoretycznie, LASSO z optymalnie dobranym parametrem $\lambda$ nie radzi sobie dobrze z identyfikacją nieistotnych zmiennych.
+
+
+### MOC IDENTYFIKACJI ISTOTNYCH ZMIENNYCH DLA LASSO
+
+Następnie, w sposób teoretyczny wyznaczę **moc identyfikacji istotnych zmiennych dla LASSO** z optymalną wartością parametru $\lambda$.
+
+Ponownie, załóżmy, że badamy następujące hipotezy: $H_{0i}: \beta_i = 0$, $H_{1i}: \beta_i \neq 0$. Wówczas, przy prawdziwości hipotezy alternatywnej, estymator wyznaczony metodą najmniejszych kwadratów $\hat{\beta}_i^{LS} \sim N(\beta_i, 1)$. Wówczas, moc takiego pojedynczego testu wyznacza się następująco: $P(\text{LASSO wybiera} X^i | \beta_i \neq 0) = P(|\hat{\beta}_i^{LS}| > \lambda | \beta_i \neq 0) = P(\hat{\beta}_i^{LS} > \lambda | \beta_i \neq 0) + P(\hat{\beta}_i^{LS} < -\lambda | \beta_i \neq 0) = P(\hat{\beta}_i^{LS} - \beta_i > \lambda - \beta_i| \beta_i \neq 0) + P(\hat{\beta}_i^{LS} - \beta_i < -\lambda - \beta_i| \beta_i \neq 0) = 1 - \Phi(\lambda - \beta_i) + \Phi(-\lambda - \beta_i)$. Mając już ten wynik, możemy wyznaczyć moc identyfikacji w następujący sposób: $$\text{moc} = \frac{1}{k} \cdot \sum_{i: \beta_i \neq 0} (1 - \Phi(\lambda - \beta_i) + \Phi(-\lambda - \beta_i)) = \frac{k \cdot (1 - \Phi(\lambda - \beta_i) + \Phi(-\lambda - \beta_i))}{k} = 1 - \Phi(\lambda - \beta_i) + \Phi(-\lambda - \beta_i).$$
+
+
+
+Wykorzystam owy wzór i przedstawię tabelę ukazującą uzyskane moce identyfikacji istotnych zmiennych w rozważanych przypadkach, gdzie, ponownie, beta1 oznacza wektor $\beta_1=...=\beta_k=4$, $\beta_{k+1}=...=\beta_p=0$, a beta2 - $\beta_1=...=\beta_k=\sqrt{\frac{80}{k}}$, $\beta_{k+1}=...=\beta_p=0$. 
+
+
+
+```{r 6, echo = FALSE}
+
+moc <- function(beta, k, lambda_opt){
+  1 - pnorm(lambda_opt - beta[1]) + pnorm(-lambda_opt - beta[1])
+}
+
+
+moc1_k1 <- moc(beta1_k1, 5, opt_lambda1_k1)
+moc1_k2 <- moc(beta1_k2, 20, opt_lambda1_k2)
+moc1_k3 <- moc(beta1_k3, 100, opt_lambda1_k3)
+moc2_k1 <- moc(beta2_k1, 5, opt_lambda2_k1)
+moc2_k2 <- moc(beta2_k2, 20, opt_lambda2_k2)
+moc2_k3 <- moc(beta2_k3, 100, opt_lambda2_k3)
+
+
+
+
+df_moc <- t(data.frame(
+  moc = round(c(moc1_k1, moc1_k2, moc1_k3), 4),
+    moc = round(c(moc2_k1, moc2_k2, moc2_k3), 4)
+))
+colnames(df_moc) <- c("k = 5", "k = 20", "k = 100")
+row.names(df_moc) <- c("beta1", "beta2")
+
+knitr::kable(df_moc, caption = "Moc identyfikacji istotnych zmiennych")
+
+```
+
+
+
+Widzimy, iż, teoretycznie, LASSO bardzo dobrze identyfikuje zmienne istotne – w przypadku $\beta_1=...=\beta_k=4$ moc wynosi w przybliżeniu $1$ dla każdego $k$, co oznacza, że praktycznie wszystkie zmienne istotne zostaną poprawnie wybrane. Spadek mocy w drugim przypadku (zwłaszcza przy $k = 100$) wynika z tego, że wartości współczynników są wtedy mniejsze – sygnał jest słabszy i nieco trudniej odróżnić zmienne istotne od szumu. Zatem, teoretycznie, LASSO z optymalnie dobranym parametrem $\lambda$ bardzo skutecznie identyfikuje zmienne istotne, jednak jednocześnie źle radzi sobie z eliminowaniem zmiennych nieistotnych, co może prowadzić do słabej interpretowalności modelu.
+
+
+
+## PRZYPADEK MACIERZY O WYRAZACH Z ROZKŁADU NORMALNEGO
+
+
+W drugiej części owego raportu rozważę sytuację takiej macierzy planu, której elementy są niezależnymi zmiennymi losowymi z rozkładu normalnego $N(0, \sigma = \frac{1}{\sqrt{n}})$. 
+
+
+### REGRESJA GRZBIETOWA, LASSO ORAZ ADAPTACYJNE LASSO
+
+
+Na początku, wyestymuję wektor $\beta$ na cztery następujące sposoby:
+
+* za pomocą **regresji grzbietowej** z parametrem wybranym za pomocą walidacji krzyżowej - zrobię to, używając polecenia *cv.glmnet* z parametrem *alpha = 0*,
+
+* za pomocą **LASSO** z parametrem wybranym za pomocą walidacji krzyżowej - zrobię to, używając polecenia *cv.glmnet* z parametrem *alpha = 1*,
+
+* za pomocą **adaptacyjnego LASSO** z parametrem wybranym za pomocą walidacji krzyżowej z wagami $1 / |\hat{\beta_i}|$, gdzie $\hat{\beta_i}$ zostały uzyskane w pierwszym punkcie (za pomocą regresji grzbietowej) - zrobię to w następujących krokach:
+
+1) obliczę wagi $w_i = \frac{1}{|\hat{\beta_i}|}$, wykorzystując współczynniki regresji uzyskane za pomocą regresji grzbietowej,
+2) przekształcę macierz planu $X$ w następujący sposób: $X_{temp} = X \cdot diag(1 / w_i)$,
+3) na przekształconych danych $X_{temp}$ zastosuję regresję LASSO z wyborem parametru $\lambda$ za pomocą walidacji krzyżowej (używając polecenia *cv.glmnet*),
+4) po uzyskaniu estymatora $\hat{\beta}_{temp}$ z regresji LASSO na przeskalowanych danych, przekształcę go z powrotem do oryginalnej skali: $\hat{\beta}_{aL} = \frac{\hat{\beta}_{temp}}{w_i}$,
+
+* za pomocą **adaptacyjnego LASSO** z parametrem wybranym za pomocą walidacji krzyżowej z wagami wybranymi w następujących krokach:
+
+1) używając estymatora wektora $\beta$ uzyskanego w punkcie drugim (za pomocą LASSO), obliczę estymator $\sigma$ jako: $\hat{\sigma} = \sqrt{\frac{RSS}{n - k}}$, gdzie $RSS$ wyznaczę w oparciu o LASSO z kros-walidacją, $k$ to liczba zmiennych wybranych przez LASSO, a $n = 500$,
+2) obliczę wagi w następujący sposób: $w_i = \frac{\hat{\sigma}}{|\hat{\beta_i}|}$, wykorzystując współczynniki regresji uzyskane za pomocą LASSO, przy czym zmienne, dla których $\hat{\beta}_i = 0$ zostaną pominięte - ich współczynniki w ostatecznym estymatorze przyjmują wartość $0$,
+3) wyznaczę parametr wygładzający $\lambda = \frac{\hat{\sigma}}{n} \cdot \Phi^{-1}(1 - \frac{0.2}{2p})$, gdzie $n = p = 500$,
+4) dla zmiennych wybranych przez klasyczne LASSO utworzę nową macierz $X_{small}$, a następnie przekształcę ją przez przemnożenie przez macierz diagonalną z $1 / w_i$,
+5) na przeskalowanej w ten sposób macierzy $X_{small}$ zastosuję regresję LASSO z wcześniej wyznaczonym parametrem $\lambda$,
+6) uzyskany wektor przeskaluję w następujący sposób, by otrzymać ostateczny estymator: $\hat{\beta}_{aL} = \frac{\hat{\beta}_{temp}}{w_i}$ (zmiennym nieuwzględnionym zostanie przypisana wartość $0$).
+
+
+Wyznaczę zatem owe cztery estymatory wektora $\beta$ dla wszystkich sześciu analizowanych przypadków.
+
+
+
+```{r 7, echo = FALSE}
+
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+
+n <- 500
+p <- 500
+X_2 <- matrix(rnorm(n * p, 0, 1/sqrt(n)), nrow = n)
+
+k_vals <- c(5, 20, 100)
+
+SE <- function(beta_hat, beta){
+  sum((beta_hat - beta)^2)
+}
+
+# zad_2 <- lapply(k_vals, function(k) {
+#   beta1 <- c(rep(4, k), rep(0, p - k))
+#   beta2 <- c(rep(sqrt(80 / k), k), rep(0, p - k))
+#   Y1 <- X_2 %*% beta1 + rnorm(n)
+#   Y2 <- X_2 %*% beta2 + rnorm(n)
+# 
+#   run_estimations <- function(Y, beta_true) {
+#     # grzbietowa
+#     obj_ridge <- cv.glmnet(X_2, Y, alpha = 0, intercept = FALSE, standardize = FALSE)
+#     hbeta_ridge <- as.numeric(coef(obj_ridge, s = 'lambda.min'))[-1]
+# 
+#     
+#     # LASSO
+#     obj_lasso <- cv.glmnet(X_2, Y, alpha = 1, intercept = FALSE, standardize = FALSE)
+#     hbeta_lasso <- as.numeric(coef(obj_lasso, s = 'lambda.min'))[-1]
+#     ind_lasso <- which(hbeta_lasso != 0)
+#     H0 <- which(beta_true == 0)
+#     H1 <- which(beta_true != 0)
+#     TD <- sum(ind_lasso %in% H1)
+#     FD <- sum(ind_lasso %in% H0)
+#     FDP_lasso <- FD / max(1, length(ind_lasso))
+#     power_lasso <- TD / length(H1)
+# 
+#     
+#     # adaptacyjne LASSO 1
+#     w1 <- 1 / abs(hbeta_ridge)
+#     X_temp <- X_2 %*% diag(1 / w1)
+#     obj_ad1lasso <- cv.glmnet(X_temp, Y, alpha = 1, intercept = FALSE, standardize = FALSE)
+#     hbetatemp_ad1lasso <- as.vector(coef(obj_ad1lasso, s = 'lambda.min'))[-1]
+#     hbeta_ad1lasso <- hbetatemp_ad1lasso / w1
+#     ind_ad1lasso <- which(hbeta_ad1lasso != 0)
+#     TD <- sum(ind_ad1lasso %in% H1)
+#     FD <- sum(ind_ad1lasso %in% H0)
+#     FDP_ad1lasso <- FD / max(1, length(ind_ad1lasso))
+#     power_ad1lasso <- TD / length(H1)
+# 
+#     
+#     # adaptacyjne LASSO 2
+#     beta_lasso_step <- hbeta_lasso
+#     RSS <- sum((Y - (X_2 %*% beta_lasso_step))^2)
+#     if (length(ind_lasso) > 1) {
+#       k_lasso <- length(ind_lasso)
+#       hsigma <- sqrt(RSS / (n - k_lasso))
+#       w2 <- hsigma / abs(beta_lasso_step[ind_lasso])
+#       lambda1 <- hsigma * qnorm(1 - (0.2 / (2 * p))) / n
+#       X_small <- X_2[, ind_lasso]
+#       X_temp <- X_small %*% diag(1 / w2)
+#       obj_ad2lasso <- glmnet(X_temp, Y, 
+#                              alpha = 1, standardize = FALSE, 
+#                              intercept = FALSE, 
+#                              lambda = lambda1)
+#       hbetatemp_ad2lasso <- as.vector(coef(obj_ad2lasso))[-1]
+#       hbeta_ad2lasso <- rep(0, p)
+#       hbeta_ad2lasso[ind_lasso] <- hbetatemp_ad2lasso / w2
+#     } else {
+#       hbeta_ad2lasso <- rep(0, p)
+#     }
+#     ind_ad2lasso <- which(hbeta_ad2lasso != 0)
+#     TD <- sum(ind_ad2lasso %in% H1)
+#     FD <- sum(ind_ad2lasso %in% H0)
+#     FDP_ad2lasso <- FD / max(1, length(ind_ad2lasso))
+#     power_ad2lasso <- TD / length(H1)
+# 
+#     
+#     # grzbietowa + knockoffy
+#     q <- 0.2
+#     X_2_copy <- matrix(rnorm(n * p, 0, 1/sqrt(n)), nrow = n)
+#     X_large <- cbind(X_2, X_2_copy)
+#     obj_large <- cv.glmnet(X_large, Y, standardize = FALSE, 
+#                            intercept = FALSE, alpha = 0)
+#     hbeta_large <- coef(obj_large, s = 'lambda.min')[-1]
+#     w <- abs(hbeta_large[1:p]) - abs(hbeta_large[(p+1):(2*p)])
+#     
+#     kn <- function(t){((1 + sum(w <= -t)) / max(sum(w >= t), 1)) <= q}
+#     
+#     w_kn <- sapply(abs(w), kn)  
+#     thres <- min(abs(w[w_kn > 0]))
+#     hbeta_knridge <- hbeta_ridge * (w >= thres)
+#     
+#     ind_knridge <- which(hbeta_knridge != 0)
+#     TD <- sum(ind_knridge %in% H1)
+#     FD <- sum(ind_knridge %in% H0)
+#     FDP_knridge <- FD / max(1, length(ind_knridge))
+#     power_knridge <- TD / length(H1)
+# 
+#     
+#     # LASSO + knockoffy
+#     obj_large <- cv.glmnet(X_large, Y, standardize = FALSE, 
+#                            intercept = FALSE, alpha = 1)
+#     hbeta_large <- coef(obj_large, s = 'lambda.min')[-1]
+#     w <- abs(hbeta_large[1:p]) - abs(hbeta_large[(p+1):(2*p)])
+#     
+#     w_kn <- sapply(abs(w), kn)  
+#     thres <- min(abs(w[w_kn > 0]))
+#     
+#     hbeta_knlasso <- hbeta_lasso * (w >= thres)
+#     
+#     ind_knlasso <- which(hbeta_knlasso != 0)
+#     TD <- sum(ind_knlasso %in% H1)
+#     FD <- sum(ind_knlasso %in% H0)
+#     FDP_knlasso <- FD / max(1, length(ind_knlasso))
+#     power_knlasso <- TD / length(H1)
+#     
+# 
+#       
+#     list(hbeta_ridge = hbeta_ridge, SE_hbeta_ridge = SE(hbeta_ridge, beta_true), 
+#          hbeta_lasso = hbeta_lasso, SE_hbeta_lasso = SE(hbeta_lasso, beta_true), FDP_lasso = FDP_lasso, power_lasso = power_lasso,
+#          hbeta_ad1lasso = hbeta_ad1lasso, SE_hbeta_ad1lasso = SE(hbeta_ad1lasso, beta_true), FDP_ad1lasso = FDP_ad1lasso, power_ad1lasso = power_ad1lasso,
+#          hbeta_ad2lasso = hbeta_ad2lasso, SE_hbeta_ad2lasso = SE(hbeta_ad2lasso, beta_true), FDP_ad2lasso = FDP_ad2lasso, power_ad2lasso = power_ad2lasso,
+#          hbeta_knridge = hbeta_knridge, FDP_knridge = FDP_knridge, power_knridge = power_knridge,
+#          hbeta_knlasso = hbeta_knlasso, FDP_knlasso = FDP_knlasso, power_knlasso = power_knlasso)
+#   }
+#   
+#     estymatory_Y1 <- run_estimations(Y1, beta1)
+#     estymatory_Y2 <- run_estimations(Y2, beta2)
+#   
+#     list(estymatory_Y1 = estymatory_Y1, estymatory_Y2 = estymatory_Y2, k = k)
+#   
+# })
+
+
+zad_2 <- readRDS("zad_2.rds")
+
+```
+
+
+
+### PORÓWNANIE SE
+
+
+Porównam teraz na wykresach $SE = ||\hat{\beta} - \beta||^2$ dla czterech otrzymanych właśnie estymatorów.
+
+
+```{r 8, echo = FALSE}
+
+case_labels <- c(
+  beta1 = "beta == 4",
+  beta2 = "beta == sqrt(80 / k)"
+)
+
+se_results <- do.call(rbind, lapply(zad_2, function(res) {
+  k_val <- res$k
+  y1 <- res$estymatory_Y1
+  y2 <- res$estymatory_Y2
+  data.frame(
+    k = k_val,
+    przypadek = rep(c("beta1", "beta2"), each = 4),
+    metoda = rep(c("ridge", "lasso", "adap_lasso1", "adap_lasso2"), times = 2),
+    SE = c(y1$SE_hbeta_ridge, y1$SE_hbeta_lasso, y1$SE_hbeta_ad1lasso, y1$SE_hbeta_ad2lasso,
+           y2$SE_hbeta_ridge, y2$SE_hbeta_lasso, y2$SE_hbeta_ad1lasso, y2$SE_hbeta_ad2lasso)
+  )
+}))
+
+
+ggplot(se_results, aes(x = factor(k), y = SE, fill = metoda)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap(~ przypadek, labeller = as_labeller(case_labels, label_parsed)) +
+  labs(title = "Porównanie błędów SE",
+       x = "k (liczba niezerowych współczynników)",
+       y = "SE",
+       fill = "Metoda") +
+  theme_minimal() + theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+
+Bardzo wyraźnie widzimy, iż w przypadku $k = 5$ uzyskane wartości SE dla obu postaci wektora $\beta$ są bardzo do siebie zbliżone, gdyż wówczas dla drugiego wektora również $\sqrt{80 / k} = \sqrt{80 / 5} = \sqrt{16} = 4$, więc sytuacje te są analogiczne. Jednak dla większych wartości $k$ postać wektora $\beta$ z $\beta_i = \sqrt{80 / k}$ daje znacznie niższe wyniki między innymi dlatego, że ma on mniejszą długość - w wyniku tego SE jest mniejsze, bo różnice są liczone względem mniejszych wartości. Możemy także zauważyć, iż dla wektora $\beta$ z $\beta_i = 4$ wraz ze wzrostem liczby niezerowych współczynników $k$ rosną również otrzymane wartości SE dla wszystkich metod - im więcej niezerowych współczynników, tym więcej możliwości popełnienia błędu. Ponadto, możemy zauważyć, że najwyższe wartości SE uzyskiwane są dla regresji grzbietowej - metoda ta nie odrzuca zmiennych nieistotnych, tylko przypisuje im małe wartości, w wyniku czego dodaje dużo błędów w estymacji zerowych współczynników, które sumują się w wysokie wartości SE. Dokładniejsze wnioski będzie można wyciągnąć w dalszej części raportu, gdy doświadczenie to zostanie powtórzone $100$ razy.
+
+
+### TECHNIKA KNOCKOFFÓW
+
+
+W tej części, zastosuję również **technikę knockoffów dla LASSO i regresji grzbietowej** tak, aby kontrolować FDR na poziomie $0.2$. Następnie, porównam FDR i moc tych procedur z FDR i mocą dla metod stosowanych powyżej.
+
+
+**Procedura knockoffów** opiera się na założeniu, iż fałszywe odkrycia mogą być spowodowane tym, że nieistotne zmienne są mocno skorelowane z istotnymi zmiennymi. Z tego powodu, aby określić, które estymatory są przypadkowo duże ze względu na korelację z odpowiednimi istotnymi zmiennymi, procedura ta polega na stworzeniu zmiennych kontrolnych, które zachowują taką samą strukturę korelacji jak zmienne w oryginalnej bazie danych. 
+
+
+Procedura ta ma następujące kroki:
+
+1) stworzę kopie zmiennych oryginalnych - macierz $X_{copy}$ o tej samej strukturze, co oryginalna macierz planu $X$, a następnie złączę te dwie macierze w jedną dużą macierz $X_{large}$,
+2) stworzę regresję grzbietową/regresję LASSO przy użyciu polecenia *cv.glmnet* na macierzy $X_{large}$ - w ten sposób otrzymam wektor estymatorów $\hat{\beta}$ dla wszystkich $2p$ zmiennych,
+3) dla każdej zmiennej oryginalnej obliczę statystykę $w_j$ w następujący sposób: $w_j = |\hat{\beta}_j| - |\hat{\beta}_j^{knockoff}|$,
+4) wyznaczę próg $\hat{t}$ według następującego wzoru: $$\hat{t} = min\{ t > 0: \frac{1 + \# \{j: w_j \leq -t  \}}{ \# \{ j: w_j \geq t\} \bigvee 1} \leq \alpha \},$$ gdzie, w naszym przypadku, $\alpha = 0.2$ - zrobię to w następujących krokach:
+
+* zdefiniuję funkcję logiczną, która sprawdza, czy dla danego progu $t$ spełniony jest powyższy warunek,
+* będę iterować po możliwych progach $t = |w_j|$ - wybór progu spośród tych wartości gwarantuje, że rozpatrzone zostaną wszystkie możliwe zmiany w zbiorze wybranych zmiennych -  i wybiorę najmniejszy $\hat{t}$ spośród tych, dla których warunek przedstawiony wyżej jest spełniony,
+
+5) na podstawie wyznaczonego progu selekcji zachowam tylko te współczynniki estymatora regresji grzbietowej/regresji LASSO, dla których odpowiadająca im statystyka knockoff $w_j$ jest nie mniejsza niż próg $\hat{t}$ - współczynniki pozostałych zmiennych zostają wyzerowane.
+
+
+
+### PORÓWNANIE FDP
+
+
+Porównam teraz **FDP** - proporcję fałszywych odkryć dla wszystkich zastosowanych metod we wszystkich sześciu omawianych przypadkach. 
+
+FDP obliczę, dzieląc liczbę rzeczywiście nieistotnych zmiennych, które zostały wybrane przez daną metodę przez maksimum z liczby $1$ oraz liczby wszystkich zmiennych wybranych przez daną metodę.
+
+
+Przedstawię teraz wykresy ukazujące uzyskane wyniki.
+
+
+
+```{r 9, echo = FALSE}
+
+case_labels <- c(
+  beta1 = "beta == 4",
+  beta2 = "beta == sqrt(80 / k)"
+)
+
+fdp_power_results <- do.call(rbind, lapply(zad_2, function(res) {
+  k_val <- res$k
+  y1 <- res$estymatory_Y1
+  y2 <- res$estymatory_Y2
+  
+  data.frame(
+    k = k_val,
+    przypadek = rep(c("beta1", "beta2"), each = 5),
+    metoda = rep(c("lasso", "adap_lasso1", "adap_lasso2", "knridge", "knlasso"), times = 2),
+    FDP = c(y1$FDP_lasso, y1$FDP_ad1lasso, y1$FDP_ad2lasso, y1$FDP_knridge, y1$FDP_knlasso,
+            y2$FDP_lasso, y2$FDP_ad1lasso, y2$FDP_ad2lasso, y2$FDP_knridge, y2$FDP_knlasso),
+    power = c(y1$power_lasso, y1$power_ad1lasso, y1$power_ad2lasso, y1$power_knridge, y1$power_knlasso,
+              y2$power_lasso, y2$power_ad1lasso, y2$power_ad2lasso, y2$power_knridge, y2$power_knlasso)
+  )
+}))
+
+
+ggplot(fdp_power_results, aes(x = k, y = FDP, color = metoda)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  facet_wrap(~ przypadek, labeller = as_labeller(case_labels, label_parsed)) +
+  labs(title = "Porównanie FDP",
+       x = "k (liczba niezerowych współczynników)",
+       y = "FDP",
+       color = "Metoda") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  geom_hline(yintercept = 0.2, linetype = "dashed", color = "red")
+
+```
+
+
+Widzimy przede wszystkim, iż obie zastosowane **procedury knockoffów** utrzymują FDP poniżej poziomu $0.2$, niezależnie od liczby niezerowych współczynników $k$ oraz rodzaju wektora $\beta$. Widzimy także, iż w obu sytuacjach to **LASSO** oraz **pierwsze adaptacyjne LASSO** uzyskują najwyższe wartości FDP. LASSO nie posiada żadnego mechanizmu kontroli FDR, z kolei wagi zastosowane w pierwszym adaptacyjnym LASSO mogą być niestabilne, a użyta walidacja krzyżowa może prowadzić do niedokładnej selekcji. Ponadto, możemy zauważyć, iż wartości FDP dla **adaptacyjnego LASSO 2** są bardzo niskie - może to być spowodowane tym, iż metoda ta usuwa zmienne odrzucone przez LASSO, a pozostałe penalizuje z użyciem wag uwzględniających poziom szumu i siłę sygnału. Dodatkowo, wybór parametru $\lambda$ oparty jest tam na kwantylu rozkładu normalnego, co także pomaga kontrolować liczbę fałszywych odkryć. Widzimy też, że przedstawione wyniki dla obu postaci wektora $\beta$ są do siebie zbliżone, przy czym metody LASSO oraz pierwsze adaptacyjne LASSO mają nieco wyższe FDP w drugim scenariuszu. Dokładniejsze wnioski będzie można wyciągnąć w dalszej części raportu, gdzie owe doświadczenie zostanie powtórzone $100$ razy.
+
+
+
+### PORÓWNANIE MOCY
+
+
+Porównam teraz **moc** dla wszystkich zastosowanych metod we wszystkich sześciu omawianych przypadkach. 
+
+Moc obliczę, dzieląc liczbę rzeczywiście istotnych zmiennych, które zostały wybrane przez daną metodę przez liczbę wszystkich rzeczywiście istotnych zmiennych.
+
+
+Przedstawię teraz wykresy ukazujące uzyskane wyniki.
+
+
+```{r 10, echo = FALSE}
+
+ggplot(fdp_power_results, aes(x = k, y = power, color = metoda)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  facet_wrap(~ przypadek, labeller = as_labeller(case_labels, label_parsed)) +
+  labs(title = "Porównanie mocy",
+       x = "k (liczba niezerowych współczynników)",
+       y = "Power",
+       color = "Metoda") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+
+
+Widzimy, iż dla wektora $\beta$ z $\beta_i = 4$ metody **LASSO** oraz **pierwsze adaptacyjne LASSO** uzyskują bardzo wysoką moc, ponieważ synał jest silny i łatwy do wykrycia. Obie te metody mają tendencję do wybierania wielu predyktorów, co zwiększa szansę wybrania również tych istotnych. W tym przypadku widzimy też, że moc dla **adaptacyjnego LASSO 2** oraz dla **metody knockoffów dla LASSO** jest dość wysoka, a najniższe wartości uzyskane są dla **metody knockoffów dla regresji grzbietowej**. Niskie wartości mocy dla metod knockoffów wynikają z tego, iż są one zaprojektowane w taki sposób, by kontrolować poziom fałszywych odkryć, co często skutkuje właśnie niższą mocą. Widzimy też, że dla drugiej postaci wektora $\beta$ moce dla wszystkich metod są niższe, co może wynikać z tego, iż sygnał słabnie przy większej liczbie istotnych zmiennych, co prowadzi do trudności z wyborem zmiennych rzeczywiście istotnych. Dokładniejsze wnioski będzie można wyciągnąć w dalszej części raportu, gdzie owe doświadczenie zostanie powtórzone $100$ razy.
+
+
+
+### POWTÓRZENIE DOŚWIADCZENIA 100 RAZY
+
+
+Powtórzę teraz wszystkie powyższe punkty $100$ razy, by porównać MSE, FDR oraz moc dla analizowanych metod.
+
+
+```{r 11, echo = FALSE}
+
+n_reps <- 100
+all_results <- vector("list", n_reps)
+
+# for (i in seq_len(n_reps)) {
+#   zad_2 <- lapply(k_vals, function(k) {
+#     beta1 <- c(rep(4, k), rep(0, p - k))
+#     beta2 <- c(rep(sqrt(80 / k), k), rep(0, p - k))
+#     Y1 <- X_2 %*% beta1 + rnorm(n)
+#     Y2 <- X_2 %*% beta2 + rnorm(n)
+#     
+#     run_estimations <- function(Y, beta_true) {
+#       # grzbietowa
+#       obj_ridge <- cv.glmnet(X_2, Y, alpha = 0, intercept = FALSE, standardize = FALSE)
+#       hbeta_ridge <- as.numeric(coef(obj_ridge, s = 'lambda.min'))[-1]
+#       
+#       
+#       # LASSO
+#       obj_lasso <- cv.glmnet(X_2, Y, alpha = 1, intercept = FALSE, standardize = FALSE)
+#       hbeta_lasso <- as.numeric(coef(obj_lasso, s = 'lambda.min'))[-1]
+#       ind_lasso <- which(hbeta_lasso != 0)
+#       H0 <- which(beta_true == 0)
+#       H1 <- which(beta_true != 0)
+#       TD <- sum(ind_lasso %in% H1)
+#       FD <- sum(ind_lasso %in% H0)
+#       FDP_lasso <- FD / max(1, length(ind_lasso))
+#       power_lasso <- TD / length(H1)
+#       
+#       
+#       # adaptacyjne LASSO 1
+#       w1 <- 1 / abs(hbeta_ridge)
+#       X_temp <- X_2 %*% diag(1 / w1)
+#       obj_ad1lasso <- cv.glmnet(X_temp, Y, alpha = 1, intercept = FALSE, standardize = FALSE)
+#       hbetatemp_ad1lasso <- as.vector(coef(obj_ad1lasso, s = 'lambda.min'))[-1]
+#       hbeta_ad1lasso <- hbetatemp_ad1lasso / w1
+#       ind_ad1lasso <- which(hbeta_ad1lasso != 0)
+#       TD <- sum(ind_ad1lasso %in% H1)
+#       FD <- sum(ind_ad1lasso %in% H0)
+#       FDP_ad1lasso <- FD / max(1, length(ind_ad1lasso))
+#       power_ad1lasso <- TD / length(H1)
+#       
+#       
+#       # adaptacyjne LASSO 2
+#       beta_lasso_step <- hbeta_lasso
+#       RSS <- sum((Y - (X_2 %*% beta_lasso_step))^2)
+#       if (length(ind_lasso) > 1) {
+#         k_lasso <- length(ind_lasso)
+#         hsigma <- sqrt(RSS / (n - k_lasso))
+#         w2 <- hsigma / abs(beta_lasso_step[ind_lasso])
+#         lambda1 <- hsigma * qnorm(1 - (0.2 / (2 * p))) / n
+#         X_small <- X_2[, ind_lasso]
+#         X_temp <- X_small %*% diag(1 / w2)
+#         obj_ad2lasso <- glmnet(X_temp, Y, 
+#                                alpha = 1, standardize = FALSE, 
+#                                intercept = FALSE, 
+#                                lambda = lambda1)
+#         hbetatemp_ad2lasso <- as.vector(coef(obj_ad2lasso))[-1]
+#         hbeta_ad2lasso <- rep(0, p)
+#         hbeta_ad2lasso[ind_lasso] <- hbetatemp_ad2lasso / w2
+#       } else {
+#         hbeta_ad2lasso <- rep(0, p)
+#       }
+#       ind_ad2lasso <- which(hbeta_ad2lasso != 0)
+#       TD <- sum(ind_ad2lasso %in% H1)
+#       FD <- sum(ind_ad2lasso %in% H0)
+#       FDP_ad2lasso <- FD / max(1, length(ind_ad2lasso))
+#       power_ad2lasso <- TD / length(H1)
+#       
+#       
+#       # grzbietowa + knockoffy
+#       q <- 0.2
+#       X_2_copy <- matrix(rnorm(n * p, 0, 1/sqrt(n)), nrow = n)
+#       X_large <- cbind(X_2, X_2_copy)
+#       obj_large <- cv.glmnet(X_large, Y, standardize = FALSE, 
+#                              intercept = FALSE, alpha = 0)
+#       hbeta_large <- coef(obj_large, s = 'lambda.min')[-1]
+#       w <- abs(hbeta_large[1:p]) - abs(hbeta_large[(p+1):(2*p)])
+#       
+#       kn <- function(t){((1 + sum(w <= -t)) / max(sum(w >= t), 1)) <= q}
+#       
+#       w_kn <- sapply(abs(w), kn)  
+#       thres <- min(abs(w[w_kn > 0]))
+#       hbeta_knridge <- hbeta_ridge * (w >= thres)
+#       
+#       ind_knridge <- which(hbeta_knridge != 0)
+#       TD <- sum(ind_knridge %in% H1)
+#       FD <- sum(ind_knridge %in% H0)
+#       FDP_knridge <- FD / max(1, length(ind_knridge))
+#       power_knridge <- TD / length(H1)
+#       
+#       
+#       # LASSO + knockoffy
+#       obj_large <- cv.glmnet(X_large, Y, standardize = FALSE, 
+#                              intercept = FALSE, alpha = 1)
+#       hbeta_large <- coef(obj_large, s = 'lambda.min')[-1]
+#       w <- abs(hbeta_large[1:p]) - abs(hbeta_large[(p+1):(2*p)])
+#       
+#       w_kn <- sapply(abs(w), kn)  
+#       thres <- min(abs(w[w_kn > 0]))
+#       
+#       hbeta_knlasso <- hbeta_lasso * (w >= thres)
+#       
+#       ind_knlasso <- which(hbeta_knlasso != 0)
+#       TD <- sum(ind_knlasso %in% H1)
+#       FD <- sum(ind_knlasso %in% H0)
+#       FDP_knlasso <- FD / max(1, length(ind_knlasso))
+#       power_knlasso <- TD / length(H1)
+#       
+#       
+#       
+#       list(hbeta_ridge = hbeta_ridge, SE_hbeta_ridge = SE(hbeta_ridge, beta_true), 
+#            hbeta_lasso = hbeta_lasso, SE_hbeta_lasso = SE(hbeta_lasso, beta_true), FDP_lasso = FDP_lasso, power_lasso = power_lasso,
+#            hbeta_ad1lasso = hbeta_ad1lasso, SE_hbeta_ad1lasso = SE(hbeta_ad1lasso, beta_true), FDP_ad1lasso = FDP_ad1lasso, power_ad1lasso = power_ad1lasso,
+#            hbeta_ad2lasso = hbeta_ad2lasso, SE_hbeta_ad2lasso = SE(hbeta_ad2lasso, beta_true), FDP_ad2lasso = FDP_ad2lasso, power_ad2lasso = power_ad2lasso,
+#            hbeta_knridge = hbeta_knridge, FDP_knridge = FDP_knridge, power_knridge = power_knridge,
+#            hbeta_knlasso = hbeta_knlasso, FDP_knlasso = FDP_knlasso, power_knlasso = power_knlasso)
+#     }
+#     
+#     estymatory_Y1 <- run_estimations(Y1, beta1)
+#     estymatory_Y2 <- run_estimations(Y2, beta2)
+#     
+#     list(estymatory_Y1 = estymatory_Y1, estymatory_Y2 = estymatory_Y2, k = k)
+#     
+#   })
+#   
+#   all_results[[i]] <- zad_2
+# }
+
+
+all_results <- readRDS('wyniki_all_2d.rds')
+
+```
+
+
+
+### PORÓWNANIE MSE
+
+
+Porównam teraz **MSE** - błąd średniokwadratowy dla wszystkich zastosowanych metod we wszystkich sześciu omawianych przypadkach. 
+
+MSE obliczę, wyliczając średnią z usykanych wartości SE, przy powtórzeniu doświadczenia $100$ razy.
+
+
+Przedstawię teraz wykresy ukazujące uzyskane wyniki.
+
+
+
+```{r 12, echo = FALSE}
+
+extract_and_avg <- function(all_results, metric) {
+  
+  df_list <- lapply(all_results, function(zad_2) {
+
+    do.call(rbind, lapply(zad_2, function(res) {
+      k_val <- res$k
+      y1 <- res$estymatory_Y1
+      y2 <- res$estymatory_Y2
+      
+      if(metric == "SE"){
+        data.frame(
+          k = k_val,
+          przypadek = rep(c("beta1", "beta2"), each = 4),
+          metoda = rep(c("ridge", "lasso", "adap_lasso1", "adap_lasso2"), times = 2),
+          value = c(y1$SE_hbeta_ridge, y1$SE_hbeta_lasso, y1$SE_hbeta_ad1lasso, y1$SE_hbeta_ad2lasso,
+                    y2$SE_hbeta_ridge, y2$SE_hbeta_lasso, y2$SE_hbeta_ad1lasso, y2$SE_hbeta_ad2lasso)
+        )
+      } else if(metric %in% c("FDP", "power")){
+        data.frame(
+          k = k_val,
+          przypadek = rep(c("beta1", "beta2"), each = 5),
+          metoda = rep(c("lasso", "adap_lasso1", "adap_lasso2", "knridge", "knlasso"), times = 2),
+          value = c(
+            y1[[paste0(metric, "_lasso")]], y1[[paste0(metric, "_ad1lasso")]], y1[[paste0(metric, "_ad2lasso")]], y1[[paste0(metric, "_knridge")]], y1[[paste0(metric, "_knlasso")]],
+            y2[[paste0(metric, "_lasso")]], y2[[paste0(metric, "_ad1lasso")]], y2[[paste0(metric, "_ad2lasso")]], y2[[paste0(metric, "_knridge")]], y2[[paste0(metric, "_knlasso")]]
+          )
+        )
+      }
+    }))
+  })
+  
+
+  df_all <- do.call(rbind, df_list)
+  
+  df_avg <- df_all %>%
+    group_by(k, przypadek, metoda) %>%
+    summarize(value = mean(value, na.rm = TRUE), .groups = "drop") %>%
+    mutate(
+      przypadek = factor(przypadek, levels = c("beta1", "beta2"))
+    )
+  
+  return(df_avg)
+}
+
+se_avg <- extract_and_avg(all_results, "SE")
+fdp_avg <- extract_and_avg(all_results, "FDP")
+power_avg <- extract_and_avg(all_results, "power")
+
+
+ggplot(se_avg, aes(x = factor(k), y = value, fill = metoda, group = metoda)) +
+  geom_bar(stat = "identity", position = "dodge") + 
+  facet_wrap(~ przypadek, labeller = as_labeller(case_labels, label_parsed)) +
+  labs(title = "Porównanie MSE",
+       x = "k (liczba niezerowych współczynników)",
+       y = "MSE",
+       color = "Metoda") + theme_minimal() + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+
+Widzimy ponownie, iż w przypadku $k = 5$ uzyskane wartości MSE dla obu postaci wektora $\beta$ są bardzo do siebie  zbliżone, gdyż wówczas analizowane sytuacje są analogiczne. Jednak w sytuacji wektora $\beta$ z $\beta_i = \sqrt{80 / k}$ dla większych wartości $k$ uzyskane zostały znacznie niższe wyniki - między innymi dlatego, iż wektor ten ma mniejszą długość, w wyniku czego MSE jest mniejsze, bo różnice liczone są względem mniejszych wartości. Widzimy też, że dla tej postaci wektora $\beta$ uzyskane wartości są bardzo do siebie zbliżone, niezależnie od liczby $k$. Z kolei dla pierwszej postaci wektora $\beta$, gdzie $\beta_i = 4$, wartości MSE rosną wraz ze wzrostem liczby niezerowych współczynników $k$ - gdy liczba niezerowych współczynników rośnie, model musi oszacować więcej istotnych zmiennych (większa złożoność modelu). Bardzo wyraźnie widzimy też, że najwyższe wartości błędu średniokwadratowego zauważalne są dla **regresji grzbietowej** - metoda ta nie zeruje współczynników, a rozkłada wagę na wszystkie zmienne - również te nieistotne, co powoduje wzrost błędu. Z kolei wyniki dla pozostałych metod są do siebie zbliżone.
+
+
+
+### PORÓWNANIE FDR
+
+
+Porównam teraz **FDR** - współczynnik fałszywych odkryć dla wszystkich zastosowanych metod we wszystkich sześciu omawianych przypadkach. 
+
+
+FDR obliczę, wyliczając średnią z usykanych wartości FDP, przy powtórzeniu doświadczenia $100$ razy.
+
+
+Przedstawię teraz wykresy ukazujące uzyskane wyniki.
+
+
+
+```{r 13, echo = FALSE}
+
+ggplot(fdp_avg, aes(x = factor(k), y = value, color = metoda, group = metoda)) +
+  geom_line(size = 1) + geom_point(size = 2) +
+  facet_wrap(~ przypadek, labeller = as_labeller(case_labels, label_parsed)) +
+  labs(title = "Porównanie FDR",
+       x = "k (liczba niezerowych współczynników)",
+       y = "FDR",
+       color = "Metoda") +
+  theme_minimal() + 
+  theme(plot.title = element_text(hjust = 0.5)) + 
+  geom_hline(yintercept = 0.2, linetype = "dashed", color = "red")
+
+```
+
+
+
+Widzimy, iż dla obu postaci wektora $\beta$ najwyższe wartości FDR uzyskiwane są dla metod **LASSO** oraz **adaptacyjne LASSO 1**. Oznacza to, że metody te wybierają wiele fałszywych zmiennych, co może wynikać z tego, iż ich parametryzacja oparta na walidacji krzyżowej nie wystarcza do kontrolowania błędnych odkryć. Widzimy też, że FDR maleje tutaj wraz z rosnącym $k$, gdyż sygnał staje się mniej rzadki i może to ułatwiać odróżnienie zmiennych istotnych od nieistotnych. Dalej, możemy zauważyć, że **metody knockoffów** skutecznie kontrolują FDR poniżej poziomu $0.2$, zgodnie z założeniem tej techniki. Są one skonstruowane właśnie w taki sposób, by kontrolować FDR na zadanym poziomie. Z kolei metoda **adaptacyjne LASSO 2** również osiąga niskie wyniki - metoda ta lepiej dopasowuje parametr $\lambda$, uwzględniając zarówno strukturę szumu, jak i estymację wag, co zmniejsza liczbę fałszywych odkryć. Ponadto, widzimy też, iż w większości sytuacjach wartości FDR maleją wraz ze wzrostem liczby $k$ - wówczas względna liczba możliwych fałszywych odkryć spada. Z kolei analizując obie postacie wektora $\beta$, widzimy, iż trend nie jest jednoznaczny -  na przykład dla wektora $\beta$ z $\beta_i = \sqrt{80 / k}$ metoda LASSO oraz techniki knockoffów uzyskały niższe FDR, a metody adaptacyjnego LASSO - wyższe.
+
+
+
+### PORÓWNANIE ŚREDNIEJ MOCY
+
+
+Porównam teraz **średnią moc** dla wszystkich zastosowanych metod we wszystkich sześciu omawianych przypadkach. 
+
+
+Średnią moc obliczę, wyliczając średnią z usykanych wartości mocy, przy powtórzeniu doświadczenia $100$ razy.
+
+
+Przedstawię teraz wykresy ukazujące uzyskane wyniki.
+
+
+
+```{r 14, echo = FALSE}
+
+ggplot(power_avg, aes(x = factor(k), y = value, color = metoda, group = metoda)) +
+  geom_line(size = 1) + geom_point(size = 2) +
+  facet_wrap(~ przypadek, labeller = as_labeller(case_labels, label_parsed)) +
+  labs(title = "Porównanie średniej mocy",
+       x = "k (liczba niezerowych współczynników)",
+       y = "średnia moc",
+       color = "Metoda") +
+  theme_minimal() + 
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+
+
+Widzimy, iż w obu przypadkach postaci wektora $\beta$ najwyższą moc uzyskały metody **LASSO** oraz **adaptacyjne LASSO 1** - są one bardzo skuteczne w wykrywaniu istotnych zmiennych, jednak kosztem również wielu odkryć fałszywych. Dalej, **adaptacyjne LASSO 2** także uzyskuje dość wysoką moc, jednak niższą niż dwie poprzednie metody. Natomiast najniższe wyniki w obu przypadkach uzyskały **techniki knockoffów** - nie są one skuteczne w wykrywaniu zmiennych istotnych, ponieważ zostały zaprojektowane do kontroli FDR, co często wiąże się właśnie z niższą mocą. Możemy również zauważyć, że w przypadku wektora $\beta$ z $\beta_i = \sqrt{80 / k}$ osiągnięte moce są znacznie niższe dla wszystkich metod, przy czym maleją one wraz ze wzrostem liczby $k$ - trudniej wykryć istotne zmienne, gdy ich wpływ jest coraz słabszy. Wartości współczynników są tutaj znacznie mniejsze, co oznacza słabszy sygnał, który trudniej odróżnić od szumu.
+
+
+
+## PODSUMOWANIE
+
+
+W raporcie tym zostały porównane **metody regulacyjne** w regresji wielorakiej - ich wady oraz zalety w oparciu o ich MSE, FDR i średnią moc. Metoda **LASSO** wykazała się bardzo wysoką mocą, jednak kosztem również wysokiego współczynnika FDR. **Regresja grzbietowa** uzyskała najwyższe błędy MSE, zwłaszcza przy większej liczbie istotnych zmiennych, gdyż metoda ta nie wykonuje selekcji zmiennych. Metoda **adaptacyjne LASSO 1**, podobnie jak LASSO, osiągnęła wysoką moc, jednak kosztem również wielu odkryć fałszywych. Z kolei metoda **adaptacyjne LASSO 2** okazała się najlepszym kompromisem między mocą a kontrolą FDR - wykazała się dość wysoką mocą oraz niskim FDR. Natomiast **metody knockoffów** wyróżniły się tym, iż kontrolują one wartości FDR na zadanym poziomie (0.2), jednak ich wadą była niska moc, zwłaszcza w przypadku słabych efektów i dużej liczby istotnych zmiennych.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
